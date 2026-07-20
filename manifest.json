@@ -1,0 +1,16 @@
+{
+  "name": "DAPRES Parent Portal",
+  "short_name": "DAPRES Portal",
+  "description": "Keeping you close to their day — attendance, alerts and updates from Dr. Alfredo Pio De Roda Elementary School.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f5f0",
+  "theme_color": "#2e7d32",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
