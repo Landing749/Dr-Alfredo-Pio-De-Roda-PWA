@@ -5,8 +5,16 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
   getAuth,
-  signInAnonymously,
   onAuthStateChanged,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+  updateProfile,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getDatabase,
@@ -61,26 +69,75 @@ export async function getMessagingIfSupported() {
 }
 export { getToken, onMessage };
 
-// Resolves once we have a signed-in user (anonymous is fine — there's no
-// parent account system, the link code IS the credential). Anonymous auth
-// persists across sessions via IndexedDB, so a parent only ever re-enters
-// a code once per device/browser install.
-export function ensureSignedIn() {
-  return new Promise((resolve, reject) => {
-    const unsub = onAuthStateChanged(
-      auth,
-      (user) => {
-        if (user) {
-          unsub();
-          resolve(user);
-        } else {
-          signInAnonymously(auth).catch((e) => {
-            unsub();
-            reject(e);
-          });
-        }
-      },
-      reject
-    );
-  });
+// ─────────────────────────────────────────────────────────────────────────
+// Parent accounts — real accounts (email/password or Google), NOT
+// anonymous. This is what lets a parent sign up once and log back in on a
+// second phone/browser and see the same linked students, instead of the
+// old anonymous-auth model where every device was a fresh identity. The
+// link code is still what actually attaches a student to the account
+// (see redeemCode() in app.js) — the account is just the thing that
+// carries that attachment across devices.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Fires immediately with the current user (or null), then again on every
+// sign-in/sign-out. Returns the unsubscribe function.
+export function watchAuthState(callback) {
+  return onAuthStateChanged(auth, callback);
 }
+
+export async function signUpParent(email, password) {
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  return cred.user;
+}
+
+export async function signInParent(email, password) {
+  const cred = await signInWithEmailAndPassword(auth, email, password);
+  return cred.user;
+}
+
+export async function resetParentPassword(email) {
+  return sendPasswordResetEmail(auth, email);
+}
+
+export async function signOutParent() {
+  return signOut(auth);
+}
+
+// Google sign-in doubles as sign-up: same call either creates the account
+// or logs into it if it already exists. Popup is nicer UX but doesn't work
+// inside an installed PWA's standalone window (no chrome to host it), so we
+// fall back to a full-page redirect there or whenever the popup is blocked.
+export async function signInParentWithGoogle() {
+  const provider = new GoogleAuthProvider();
+  const standalone =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true;
+  if (standalone) {
+    return signInWithRedirect(auth, provider); // resolved later via resolveGoogleRedirect()
+  }
+  try {
+    const cred = await signInWithPopup(auth, provider);
+    return cred.user;
+  } catch (e) {
+    const fallbackCodes = [
+      "auth/popup-blocked",
+      "auth/operation-not-supported-in-this-environment",
+      "auth/cancelled-popup-request",
+    ];
+    if (fallbackCodes.includes(e.code)) {
+      return signInWithRedirect(auth, provider);
+    }
+    throw e;
+  }
+}
+
+// Call once on startup, before watchAuthState's first callback matters —
+// picks up the result of a signInWithRedirect() from the fallback path
+// above (or from standalone PWAs, which always redirect). No-op if there
+// was no pending redirect.
+export async function resolveGoogleRedirect() {
+  const result = await getRedirectResult(auth);
+  return result?.user || null;
+}
+
+export { updateProfile };

@@ -1,6 +1,8 @@
 import {
   auth, db, ref, get, onValue, set, update,
-  ensureSignedIn, getMessagingIfSupported, getToken, onMessage, FCM_VAPID_KEY,
+  watchAuthState, signUpParent, signInParent, signInParentWithGoogle,
+  resolveGoogleRedirect, resetParentPassword, signOutParent,
+  getMessagingIfSupported, getToken, onMessage, FCM_VAPID_KEY,
 } from "./firebase-init.js";
 import { icon } from "./icons.js";
 
@@ -11,6 +13,8 @@ import { icon } from "./icons.js";
 //   schools/DAPRES/attendance/{yyyy-mm-dd}/{student_id} = {status,time,grade,section,student_name}
 //   schools/DAPRES/link_codes/{CODE}                    = {student_id,student_name,grade,section,expires_at}
 //   parents/{uid}/students/{student_id}                 = {student_name,grade,section,linked_at}
+//   ^ {uid} is now a real parent account (email/password or Google), not a
+//     per-device anonymous one — same account, same students, any device.
 //   parents/{uid}/fcm_tokens/{token}                    = true
 //   parents/{uid}/prefs                                 = {lateAlerts,dailySummary,announcements}
 const SCHOOL_ID = "DAPRES";
@@ -317,7 +321,7 @@ async function renderSettings() {
 
   el.innerHTML = `
     <div class="section-title">Settings</div>
-    <div class="section-sub">Parent account</div>
+    <div class="section-sub">${auth.currentUser?.email ? escapeHtml(auth.currentUser.email) : "Signed in with Google"}</div>
 
     <div class="card">
       <div class="week-label" style="margin-bottom:4px;">Linked students</div>
@@ -531,7 +535,118 @@ function wireLinkModal() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Mandatory onboarding gate — first run only. No tabs, no nav, no way to
+// Auth gate — shown before anything else (even the onboarding intro) when
+// there's no signed-in parent account. A parent creates an account once
+// (email/password or Google) and from then on just logs into that same
+// account on any device to see their linked students; the link-code step
+// that follows (onboarding gate, below) is only about attaching a *new*
+// student to whichever account is currently signed in.
+// ─────────────────────────────────────────────────────────────────────────
+function showAuthScreen() {
+  $("#onboarding-screen")?.classList.add("hidden"); // never show both gates at once
+  $("#auth-screen")?.classList.remove("hidden");
+  $(".app")?.style.setProperty("display", "none");
+  $(".tabbar")?.style.setProperty("display", "none");
+}
+function hideAuthScreen() {
+  $("#auth-screen")?.classList.add("hidden");
+}
+
+function authErrorMessage(e) {
+  const messages = {
+    "auth/email-already-in-use": "That email already has an account — try logging in instead.",
+    "auth/invalid-email": "That doesn't look like a valid email address.",
+    "auth/weak-password": "Password must be at least 6 characters.",
+    "auth/missing-password": "Enter a password.",
+    "auth/user-not-found": "No account found with that email.",
+    "auth/wrong-password": "Incorrect password.",
+    "auth/invalid-credential": "Incorrect email or password.",
+    "auth/too-many-requests": "Too many attempts — please wait a bit and try again.",
+    "auth/popup-closed-by-user": "Sign-in was closed before finishing — try again.",
+    "auth/network-request-failed": "Network error — check your connection and try again.",
+    "auth/admin-restricted-operation": "This sign-in method isn't enabled for this school yet.",
+  };
+  return messages[e?.code] || e?.message || "Something went wrong — please try again.";
+}
+
+function wireAuthScreen() {
+  const tabs = Array.from(document.querySelectorAll("#auth-screen .auth-tab"));
+  const submitBtn = $("#auth-submit-btn");
+  const forgotBtn = $("#auth-forgot-btn");
+  const errEl = $("#auth-error");
+  const emailEl = $("#auth-email-input");
+  const passEl = $("#auth-password-input");
+  const googleBtn = $("#auth-google-btn");
+  let mode = "signup";
+
+  function setMode(next) {
+    mode = next;
+    tabs.forEach(t => t.classList.toggle("active", t.dataset.mode === mode));
+    submitBtn.textContent = mode === "signup" ? "Create account" : "Log in";
+    passEl.setAttribute("autocomplete", mode === "signup" ? "new-password" : "current-password");
+    forgotBtn.classList.toggle("hidden", mode !== "login");
+    errEl.textContent = "";
+  }
+  tabs.forEach(t => t.addEventListener("click", () => setMode(t.getAttribute("data-mode"))));
+
+  async function submit() {
+    const email = emailEl.value.trim();
+    const password = passEl.value;
+    errEl.textContent = "";
+    if (!email || !password) { errEl.textContent = "Enter your email and password."; return; }
+    if (mode === "signup" && password.length < 6) { errEl.textContent = "Password must be at least 6 characters."; return; }
+
+    submitBtn.disabled = true;
+    googleBtn.disabled = true;
+    const prevLabel = submitBtn.textContent;
+    submitBtn.textContent = mode === "signup" ? "Creating account…" : "Signing in…";
+    try {
+      if (mode === "signup") await signUpParent(email, password);
+      else await signInParent(email, password);
+      // watchAuthState() in init() picks up the resulting signed-in user
+      // from here — nothing else to do on success.
+    } catch (e) {
+      errEl.textContent = authErrorMessage(e);
+      submitBtn.disabled = false;
+      googleBtn.disabled = false;
+      submitBtn.textContent = prevLabel;
+    }
+  }
+  submitBtn.addEventListener("click", submit);
+  passEl.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  emailEl.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+
+  forgotBtn.addEventListener("click", async () => {
+    const email = emailEl.value.trim();
+    errEl.textContent = "";
+    if (!email) { errEl.textContent = "Enter your email above first, then tap this again."; return; }
+    try {
+      await resetParentPassword(email);
+      toast("Password reset email sent.");
+    } catch (e) {
+      errEl.textContent = authErrorMessage(e);
+    }
+  });
+
+  googleBtn.addEventListener("click", async () => {
+    errEl.textContent = "";
+    submitBtn.disabled = true;
+    googleBtn.disabled = true;
+    try {
+      await signInParentWithGoogle(); // may redirect the page (standalone PWA / popup-blocked); resumes via resolveGoogleRedirect() in init()
+    } catch (e) {
+      errEl.textContent = authErrorMessage(e);
+    } finally {
+      submitBtn.disabled = false;
+      googleBtn.disabled = false;
+    }
+  });
+
+  setMode("signup");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+
 // see any part of the app before a code is entered; this replaces the old
 // "browse around with an empty state" behavior. Uses the same redeemCode()
 // as the modal above.
@@ -596,17 +711,17 @@ function wireOnboardingGate() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Log out — clears this device's local link entirely (parent re-enters a
-// code on next login). There's no separate parent account system, so
-// "logging out" un-links this browser rather than switching users.
+// Log out — signs out of the parent account on this device. Unlike the old
+// anonymous-auth model, this does NOT delete linked students; they stay on
+// the account in the cloud, so logging back in here (or on any other
+// device, with the same email/password or Google account) brings them
+// right back.
 // ─────────────────────────────────────────────────────────────────────────
 async function handleLogout() {
-  if (!confirm("Log out and unlink all students from this device?")) return;
+  if (!confirm("Log out of your parent account on this device?")) return;
   try {
-    if (uid) {
-      await set(ref(db, `parents/${uid}/students`), null);
-    }
-  } catch (e) { console.warn("logout cleanup failed (non-fatal):", e); }
+    await signOutParent();
+  } catch (e) { console.warn("Sign-out failed:", e); }
   Object.keys(localStorage).filter(k => k.startsWith("dapres_parent:")).forEach(k => localStorage.removeItem(k));
   location.reload();
 }
@@ -731,6 +846,7 @@ function markInstallPromptShown() {
 function showInstallPrompt() {
   if (isStandalone() || installPromptAlreadyShown()) return;
   if (!$("#onboarding-screen")?.classList.contains("hidden")) return; // wait until past the gate
+  if (!$("#auth-screen")?.classList.contains("hidden")) return; // ...and past the sign-in gate
   const banner = $("#install-prompt");
   if (!banner) return;
 
@@ -782,6 +898,7 @@ async function init() {
   wireNav();
   wireLinkModal();
   wireOnboardingGate();
+  wireAuthScreen();
   wireInstallPrompt();
   alertsCache = loadLocal("alerts", []);
 
@@ -795,25 +912,40 @@ async function init() {
   }
 
   setLoadingStatus("Signing in…");
+
+  // Pick up the result of a Google signInWithRedirect() (used inside
+  // standalone PWAs and as a popup-blocked fallback) before wiring the
+  // ongoing auth-state watcher below. No-op if there was no redirect.
   try {
-    const user = await ensureSignedIn();
-    uid = user.uid;
+    await resolveGoogleRedirect();
   } catch (e) {
-    console.error("Sign-in failed:", e);
-    setLoadingStatus("Couldn't connect — check your internet and reload.");
-    return; // leave the loading screen up rather than show a broken app
+    console.error("Google sign-in redirect failed:", e);
   }
 
-  setLoadingStatus("Loading students…");
-  watchLinkedStudents();
+  let appStarted = false;
+  watchAuthState((user) => {
+    if (!user) {
+      hideLoadingScreen();
+      showAuthScreen();
+      return;
+    }
 
-  setLoadingStatus("Loading attendance…");
-  watchAttendance();
+    uid = user.uid;
+    hideAuthScreen();
+    if (appStarted) return; // already loading data — just a token refresh, ignore
+    appStarted = true;
 
-  // Don't hold the loading screen hostage to a slow/offline first RTDB
-  // read — show the app after a short grace period either way; the
-  // realtime listeners above will backfill the UI the moment data arrives.
-  setTimeout(hideLoadingScreen, 900);
+    setLoadingStatus("Loading students…");
+    watchLinkedStudents();
+
+    setLoadingStatus("Loading attendance…");
+    watchAttendance();
+
+    // Don't hold the loading screen hostage to a slow/offline first RTDB
+    // read — show the app after a short grace period either way; the
+    // realtime listeners above will backfill the UI the moment data arrives.
+    setTimeout(hideLoadingScreen, 900);
+  });
 }
 
 init();

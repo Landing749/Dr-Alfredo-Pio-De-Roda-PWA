@@ -173,6 +173,54 @@
     font-size: 10px; letter-spacing: 0.5px; opacity: 0.88;
   }
   #onboarding-screen .made-by img { width: 16px; height: 16px; border-radius: 50%; }
+
+  /* ── Auth gate (sign up / log in / Google) ────────────────── */
+  #auth-screen {
+    position: fixed; inset: 0; z-index: 8100;
+    background: linear-gradient(135deg, var(--green), var(--sienna));
+    background-size: 220% 220%; animation: gradientShift 7s ease infinite;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px; color: white;
+  }
+  #auth-screen.hidden { display: none; }
+  .auth-card { padding: 30px 26px 26px; text-align: center; }
+  .auth-header .onboard-icon.small { margin-bottom: 10px; }
+  .auth-header h2 { font-size: 17.5px; margin: 0 0 6px; letter-spacing: -0.2px; }
+  .auth-header .sub { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 0 auto 20px; max-width: 260px; }
+  .auth-tabs { display: flex; background: var(--bg); border-radius: var(--r-sm); padding: 3px; margin-bottom: 18px; }
+  .auth-tab {
+    flex: 1; border: none; background: none; padding: 9px 6px; border-radius: 8px; cursor: pointer;
+    font-family: "Poppins", sans-serif; font-size: 12.5px; font-weight: 600; color: var(--muted);
+    transition: background 0.2s var(--ease-out), color 0.2s var(--ease-out);
+  }
+  .auth-tab.active { background: white; color: var(--green); box-shadow: var(--shadow-xs); }
+  .auth-body { text-align: left; }
+  .btn.google {
+    width: 100%; background: white; color: var(--text); border: 1.5px solid #e2e2e2; border-radius: var(--r-sm);
+    padding: 11px; font-weight: 600; font-family: "Poppins", sans-serif; cursor: pointer; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; gap: 10px; box-shadow: none;
+    transition: background 0.2s var(--ease-out), border-color 0.2s var(--ease-out), transform 0.15s var(--ease-out);
+  }
+  .btn.google:hover { background: var(--bg); border-color: #ccc; }
+  .btn.google:active { transform: scale(0.98); }
+  .btn.google:disabled { opacity: 0.6; cursor: not-allowed; }
+  .auth-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0; }
+  .auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .auth-divider span { font-size: 11px; color: var(--muted); }
+  .auth-body input[type="email"], .auth-body input[type="password"] {
+    width: 100%; padding: 12px 14px; border-radius: var(--r-sm); border: 1.5px solid #e2e2e2; font-size: 13.5px;
+    font-family: "Poppins", sans-serif; margin-bottom: 10px; box-sizing: border-box; color: var(--text);
+    transition: border-color 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out);
+  }
+  .auth-body input:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 4px var(--green-tint); }
+  .auth-body .error-msg { color: var(--red); font-size: 12px; min-height: 16px; margin-bottom: 4px; }
+  .auth-body .error-msg:not(:empty) { animation: shake 0.4s var(--ease-out); }
+  .auth-body .btn { margin-top: 4px; }
+  .link-btn {
+    display: block; margin: 12px auto 0; border: none; background: none; cursor: pointer;
+    font-family: "Poppins", sans-serif; font-size: 12px; font-weight: 600; color: var(--green);
+  }
+  .link-btn.hidden { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes gradientShift { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
   @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
@@ -536,6 +584,37 @@
     <div class="sub">Keeping you close to their day</div>
     <div class="spinner"></div>
     <div class="status-line" id="loading-status">Connecting…</div>
+    <div class="made-by">
+      <img src="assets/athstudios-logo.png" alt="ATHStudios">
+      <span>Built by ATHStudios</span>
+    </div>
+  </div>
+
+  <!-- ══════════ Auth gate — must sign in to a real parent account before anything else, including onboarding ══════════ -->
+  <div id="auth-screen" class="hidden">
+    <div class="onboard-card auth-card">
+      <div class="auth-header">
+        <div class="onboard-icon small"><div class="crest"><img src="icons/icon-192.png" alt="DAPRES crest"></div></div>
+        <h2>Parent Portal</h2>
+        <p class="sub">Sign in once — your linked students follow you to any device.</p>
+      </div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-mode="signup" type="button">Create account</button>
+        <button class="auth-tab" data-mode="login" type="button">Log in</button>
+      </div>
+      <div class="auth-body">
+        <button class="btn google" id="auth-google-btn" type="button">
+          <svg viewBox="0 0 20 20" width="18" height="18"><path fill="#4285F4" d="M19.6 10.23c0-.68-.06-1.36-.18-2.02H10v3.83h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.23c1.9-1.75 2.99-4.32 2.99-7.33Z"/><path fill="#34A853" d="M10 20c2.7 0 4.96-.89 6.62-2.42l-3.23-2.5c-.9.6-2.05.95-3.39.95-2.6 0-4.8-1.76-5.59-4.12H1.06v2.59A10 10 0 0 0 10 20Z"/><path fill="#FBBC05" d="M4.41 11.9a6 6 0 0 1 0-3.8V5.51H1.06a10 10 0 0 0 0 8.98l3.35-2.59Z"/><path fill="#EA4335" d="M10 3.98c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.6 9.6 0 0 0 10 0 10 10 0 0 0 1.06 5.51L4.41 8.1C5.2 5.74 7.4 3.98 10 3.98Z"/></svg>
+          Continue with Google
+        </button>
+        <div class="auth-divider"><span>or</span></div>
+        <input type="email" id="auth-email-input" placeholder="Email address" autocomplete="email">
+        <input type="password" id="auth-password-input" placeholder="Password" autocomplete="current-password">
+        <div class="error-msg" id="auth-error"></div>
+        <button class="btn" id="auth-submit-btn" type="button">Create account</button>
+        <button class="link-btn hidden" id="auth-forgot-btn" type="button">Forgot password?</button>
+      </div>
+    </div>
     <div class="made-by">
       <img src="assets/athstudios-logo.png" alt="ATHStudios">
       <span>Built by ATHStudios</span>
